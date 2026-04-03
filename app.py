@@ -4,7 +4,11 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain_text_splitter import RecursiveCharacterTextSplitter
+# Versão blindada da importação:
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
 from fpdf import FPDF
 
 # Configuração da Página
@@ -17,6 +21,7 @@ def generate_pdf(text, query):
     pdf.cell(0, 10, f"Relatorio: {query}", ln=True)
     pdf.set_font("Arial", size=12)
     pdf.ln(10)
+    # Limpeza de texto para o PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
     return pdf.output(dest='S').encode('latin-1')
@@ -28,7 +33,7 @@ with st.sidebar:
     st.header("⚙️ Configuração")
     groq_key = st.text_input("Cole sua Groq API Key aqui:", type="password")
     uploaded_file = st.file_uploader("Suba o PDF do Rockwood & Green", type="pdf")
-    st.info("A API Key é gratuita e necessária para o cérebro da IA funcionar.")
+    st.info("A API Key é gratuita e necessária.")
 
 if uploaded_file and groq_key:
     if not os.path.exists("temp"): os.makedirs("temp")
@@ -50,7 +55,7 @@ if uploaded_file and groq_key:
             vector_db = init_engine(file_path)
             st.success("Livro pronto para consulta!")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro na indexação: {e}")
             st.stop()
 
     query = st.text_input("Sobre qual fratura ou região deseja pesquisar?")
