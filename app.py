@@ -1,79 +1,88 @@
 import streamlit as st
 import os
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import DirectoryLoader, UnstructuredMarkdownLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-# Versão blindada da importação:
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except ImportError:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from fpdf import FPDF
 
-# Configuração da Página
-st.set_page_config(page_title="OrtoXande - Rockwood AI", page_icon="🦴")
+# 1. CONFIGURAÇÃO DA PÁGINA
+st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="🦴")
 
-def generate_pdf(text, query):
+# 2. PEGAR CHAVE DOS SECRETS (PERMANENTE)
+api_key = st.secrets.get("GROQ_API_KEY")
+
+def generate_pdf(text, query, fonte):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, f"Relatorio: {query}", ln=True)
+    pdf.cell(0, 10, f"Consulta: {fonte}", ln=True)
     pdf.set_font("Arial", size=12)
     pdf.ln(10)
-    # Limpeza de texto para o PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
     return pdf.output(dest='S').encode('latin-1')
 
-st.title("🛡️ OrtoXande: Rockwood & Green Search")
-st.markdown("---")
+@st.cache_resource
+def get_vector_db(pasta_livro):
+    if not os.path.exists(pasta_livro):
+        return None
+    # Carrega todos os .md da pasta
+    loader = DirectoryLoader(pasta_livro, glob="*.md", loader_cls=UnstructuredMarkdownLoader)
+    docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_docs = text_splitter.split_documents(docs)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    return FAISS.from_documents(split_docs, embeddings)
 
-with st.sidebar:
-    st.header("⚙️ Configuração")
-    groq_key = st.text_input("Cole sua Groq API Key aqui:", type="password")
-    uploaded_file = st.file_uploader("Suba o PDF do Rockwood & Green", type="pdf")
-    st.info("A API Key é gratuita e necessária.")
+if "livro_path" not in st.session_state:
+    st.session_state.livro_path = None
 
-if uploaded_file and groq_key:
-    if not os.path.exists("temp"): os.makedirs("temp")
-    file_path = os.path.join("temp", uploaded_file.name)
-    
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+# --- TELA INICIAL ---
+if st.session_state.livro_path is None:
+    st.title("🛡️ OrtoXande Pro")
+    st.subheader("Escolha a base de conhecimento:")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📚 Rockwood & Green", use_container_width=True):
+            st.session_state.livro_path = "livros/rockwood"
+            st.rerun()
+    with col2:
+        if st.button("📖 Campbell's Operative", use_container_width=True):
+            st.session_state.livro_path = "livros/campbell"
+            st.rerun()
 
-    @st.cache_resource
-    def init_engine(_file_path):
-        loader = PyPDFLoader(_file_path)
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        docs = loader.load_and_split(text_splitter)
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        return FAISS.from_documents(docs, embeddings)
-
-    with st.spinner("🚀 Analisando o livro... Isso leva cerca de 1 minuto."):
-        try:
-            vector_db = init_engine(file_path)
-            st.success("Livro pronto para consulta!")
-        except Exception as e:
-            st.error(f"Erro na indexação: {e}")
-            st.stop()
-
-    query = st.text_input("Sobre qual fratura ou região deseja pesquisar?")
-
-    if query:
-        llm = ChatGroq(model="llama3-70b-8192", groq_api_key=groq_key, temperature=0.1)
-        search_results = vector_db.similarity_search(query, k=4)
-        context = "\n".join([doc.page_content for doc in search_results])
-        
-        prompt = f"Baseado no Rockwood e Green: {context}\n\nAnalise profundamente: {query}. Foque em Classificação, Indicações e Complicações."
-
-        with st.spinner("🧠 Pesquisando no Rockwood..."):
-            response = llm.invoke(prompt)
-            answer = response.content
-            st.markdown("### 📋 Resultado:")
-            st.write(answer)
-            
-            pdf_bytes = generate_pdf(answer, query)
-            st.download_button(label="📥 Baixar em PDF", data=pdf_bytes, file_name=f"Resumo_Rockwood.pdf")
+# --- TELA DE PESQUISA ---
 else:
-    st.warning("👈 Por favor, cole a API Key e suba o PDF na barra lateral para começar.")
+    nome = "Rockwood" if "rockwood" in st.session_state.livro_path else "Campbell"
+    st.title(f"🔍 Pesquisando no {nome}")
+    if st.button("← Trocar Livro"):
+        st.session_state.livro_path = None
+        st.rerun()
+
+    if not api_key:
+        st.error("ERRO: Configure a GROQ_API_KEY nos Secrets do Streamlit.")
+    else:
+        with st.spinner(f"Indexando {nome}..."):
+            db = get_vector_db(st.session_state.livro_path)
+        
+        if db:
+            query = st.text_input("Digite sua dúvida ortopédica:")
+            if query:
+                with st.spinner("🧠 IA Analisando..."):
+                    llm = ChatGroq(model="llama3-70b-8192", groq_api_key=api_key, temperature=0.1)
+                    res = db.similarity_search(query, k=5)
+                    context = "\n".join([d.page_content for d in res])
+                    prompt = f"Aja como um Ortopedista Senior. Baseado no livro {nome}, responda profundamente: {query}\n\nContexto:\n{context}"
+                    resposta = llm.invoke(prompt).content
+                    st.markdown(resposta)
+                    
+                    pdf_data = generate_pdf(resposta, query, nome)
+                    st.download_button("📥 Baixar PDF", pdf_data, f"{query}.pdf")
+                    
+                    txt_wa = f"*Consulta OrtoXande*\n\n{resposta[:800]}..."
+                    link_wa = f"https://wa.me/?text={txt_wa.replace(' ', '%20')}"
+                    st.markdown(f'<a href="{link_wa}" target="_blank"><button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; width:100%; cursor:pointer;">📲 Enviar WhatsApp</button></a>', unsafe_allow_html=True)
+        else:
+            st.warning(f"Atenção: A pasta {st.session_state.livro_path} ainda não contém arquivos .md")
