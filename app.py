@@ -21,7 +21,7 @@ def generate_pdf(text, query, fonte):
     pdf.cell(0, 10, f"Consulta Ortopedica: {fonte}", ln=True)
     pdf.set_font("Helvetica", size=12)
     pdf.ln(10)
-    # Limpa caracteres especiais para evitar erro no PDF
+    # Limpa caracteres especiais para o PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
     return pdf.output()
@@ -72,12 +72,13 @@ else:
             query = st.text_input(f"O que deseja saber no {label}?")
             if query:
                 with st.spinner("🧠 IA Analisando base científica..."):
-                    # COMANDO CORRIGIDO: Agora usamos .invoke() em vez de .get_relevant_documents()
+                    # Busca os trechos relevantes
                     context_docs = retriever.invoke(query)[:5]
                     context_text = "\n\n".join([d.page_content for d in context_docs])
                     
+                    # ATUALIZAÇÃO DO MODELO: Llama 3.3 (Flagship da Meta/Groq)
                     llm = ChatGroq(
-                        model="llama-3.1-70b-versatile", 
+                        model="llama-3.3-70b-versatile", 
                         groq_api_key=api_key,
                         temperature=0.1
                     )
@@ -95,7 +96,6 @@ else:
                         col_pdf, col_wa = st.columns(2)
                         with col_pdf:
                             pdf_data = generate_pdf(resposta, query, label)
-                            # Nota: fpdf2.output() retorna bytes por padrão no modo atual
                             st.download_button("📥 Baixar PDF", pdf_data, f"{query}.pdf")
                         with col_wa:
                             msg_wa = f"*OrtoXande - {label}*\n\n{resposta[:700]}..."
