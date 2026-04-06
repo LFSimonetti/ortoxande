@@ -5,6 +5,7 @@ langchain-groq
 langchain-huggingface
 langchain-text-splitters
 faiss-cpu
-pypdf
+unstructured
+markdown
 fpdf2
 sentence-transformers
