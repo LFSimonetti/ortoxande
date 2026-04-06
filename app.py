@@ -13,7 +13,7 @@ st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="�
 # 2. PEGAR CHAVE DOS SECRETS
 api_key = st.secrets.get("GROQ_API_KEY")
 
-# 3. FUNÇÕES DE SUPORTE
+# 3. FUNÇÃO DE PDF CORRIGIDA
 def generate_pdf(text, query, fonte):
     pdf = FPDF()
     pdf.add_page()
@@ -21,10 +21,11 @@ def generate_pdf(text, query, fonte):
     pdf.cell(0, 10, f"Consulta Ortopedica: {fonte}", ln=True)
     pdf.set_font("Helvetica", size=12)
     pdf.ln(10)
-    # Limpa caracteres especiais para o PDF
+    # Limpa caracteres especiais para evitar erros de encoding no PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
-    return pdf.output()
+    # Convertendo bytearray para bytes (Correção do erro)
+    return bytes(pdf.output())
 
 @st.cache_resource
 def get_retriever(pasta):
@@ -63,20 +64,18 @@ else:
         st.rerun()
 
     if not api_key:
-        st.error("ERRO: GROQ_API_KEY não configurada nos Secrets do Streamlit.")
+        st.error("ERRO: GROQ_API_KEY não configurada nos Secrets.")
     else:
         with st.spinner(f"Acessando capítulos do {label}..."):
             retriever = get_retriever(st.session_state.livro)
         
         if retriever:
-            query = st.text_input(f"O que deseja saber no {label}?")
+            query = st.text_input(f"O que deseja saber no {label}?", key="input_query")
             if query:
                 with st.spinner("🧠 IA Analisando base científica..."):
-                    # Busca os trechos relevantes
                     context_docs = retriever.invoke(query)[:5]
                     context_text = "\n\n".join([d.page_content for d in context_docs])
                     
-                    # ATUALIZAÇÃO DO MODELO: Llama 3.3 (Flagship da Meta/Groq)
                     llm = ChatGroq(
                         model="llama-3.3-70b-versatile", 
                         groq_api_key=api_key,
@@ -95,8 +94,14 @@ else:
                         
                         col_pdf, col_wa = st.columns(2)
                         with col_pdf:
-                            pdf_data = generate_pdf(resposta, query, label)
-                            st.download_button("📥 Baixar PDF", pdf_data, f"{query}.pdf")
+                            # Gerando o PDF com a correção de formato
+                            pdf_bytes = generate_pdf(resposta, query, label)
+                            st.download_button(
+                                label="📥 Baixar PDF",
+                                data=pdf_bytes,
+                                file_name=f"{query.replace(' ', '_')}.pdf",
+                                mime="application/pdf"
+                            )
                         with col_wa:
                             msg_wa = f"*OrtoXande - {label}*\n\n{resposta[:700]}..."
                             link_wa = f"https://wa.me/?text={msg_wa.replace(' ', '%20')}"
