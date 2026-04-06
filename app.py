@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-from langchain_community.document_loaders import DirectoryLoader, UnstructuredMarkdownLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
@@ -28,30 +27,26 @@ def generate_pdf(text, query, fonte):
 def get_vector_db(pasta_livro):
     if not os.path.exists(pasta_livro):
         return None
-    # Carrega todos os .md da pasta
-    loader = DirectoryLoader(pasta_livro, glob="*.md", loader_cls=UnstructuredMarkdownLoader)
-    docs = loader.load()
+    
+    from langchain_community.document_loaders import TextLoader
+    
+    docs = []
+    # Lista todos os arquivos .md da pasta de forma manual e segura
+    for arquivo in os.listdir(pasta_livro):
+        if arquivo.endswith(".md"):
+            caminho_completo = os.path.join(pasta_livro, arquivo)
+            # Usamos o TextLoader que é imune ao erro de download do spaCy
+            loader = TextLoader(caminho_completo, encoding="utf-8")
+            docs.extend(loader.load())
+    
+    if not docs:
+        return None
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_docs = text_splitter.split_documents(docs)
+    
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     return FAISS.from_documents(split_docs, embeddings)
-
-if "livro_path" not in st.session_state:
-    st.session_state.livro_path = None
-
-# --- TELA INICIAL ---
-if st.session_state.livro_path is None:
-    st.title("🛡️ OrtoXande Pro")
-    st.subheader("Escolha a base de conhecimento:")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📚 Rockwood & Green", use_container_width=True):
-            st.session_state.livro_path = "livros/rockwood"
-            st.rerun()
-    with col2:
-        if st.button("📖 Campbell's Operative", use_container_width=True):
-            st.session_state.livro_path = "livros/campbell"
-            st.rerun()
 
 # --- TELA DE PESQUISA ---
 else:
