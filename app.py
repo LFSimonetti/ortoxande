@@ -6,104 +6,121 @@ from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from fpdf import FPDF
 
-# 1. CONFIGURAÇÃO DA PÁGINA
+# 1. CONFIGURAÇÃO DE ELITE
 st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="🦴")
 
-# 2. PEGAR CHAVE DOS SECRETS
-api_key = st.secrets.get("GROQ_API_KEY")
+# Estilo para o botão de WhatsApp
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 5px; }
+    .wa-button {
+        background-color: #25D366;
+        color: white;
+        padding: 10px;
+        text-align: center;
+        text-decoration: none;
+        display: block;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
+# 2. FUNÇÕES DE SUPORTE
 def generate_pdf(text, query, fonte):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
+    pdf.set_font("Helvetica", 'B', 16)
     pdf.cell(0, 10, f"Consulta Ortopedica: {fonte}", ln=True)
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Helvetica", size=12)
     pdf.ln(10)
+    # Limpa caracteres para o PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output()
 
-# 3. ENGINE DE BUSCA ULTRA-LEVE (BM25)
 @st.cache_resource
-def get_search_engine(pasta_livro):
-    if not os.path.exists(pasta_livro):
+def get_search_engine(pasta):
+    if not os.path.exists(pasta):
         return None
     
     docs = []
-    arquivos = [f for f in os.listdir(pasta_livro) if f.endswith(".md")]
-    
-    if not arquivos:
+    # Lê todos os arquivos .md da pasta de forma eficiente
+    files = [f for f in os.listdir(pasta) if f.endswith(".md")]
+    if not files:
         return None
-
-    for arquivo in arquivos:
-        caminho = os.path.join(pasta_livro, arquivo)
-        loader = TextLoader(caminho, encoding="utf-8")
+        
+    for f in files:
+        loader = TextLoader(os.path.join(pasta, f), encoding="utf-8")
         docs.extend(loader.load())
     
-    # Divide o texto em pedaços para a IA ler
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
-    split_docs = text_splitter.split_documents(docs)
+    # Divide em blocos menores para análise da IA
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+    final_docs = splitter.split_documents(docs)
     
-    # Cria o motor de busca ultra-rápido que não pesa no servidor
-    return BM25Retriever.from_documents(split_docs)
+    # Motor BM25: Ultra-leve (não crasha o servidor)
+    return BM25Retriever.from_documents(final_docs)
 
-# Controle de estado
-if "livro" not in st.session_state:
-    st.session_state.livro = None
+# 3. LÓGICA DE NAVEGAÇÃO
+if "livro_ativo" not in st.session_state:
+    st.session_state.livro_ativo = None
 
-# --- TELA INICIAL ---
-if st.session_state.livro is None:
+# MENU INICIAL
+if st.session_state.livro_ativo is None:
     st.title("🛡️ OrtoXande Pro")
-    st.subheader("Selecione a base de conhecimento:")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📚 Rockwood & Green", use_container_width=True):
-            st.session_state.livro = "livros/rockwood"
-            st.rerun()
-    with col2:
-        if st.button("📖 Campbell's Operative", use_container_width=True):
-            st.session_state.livro = "livros/campbell"
-            st.rerun()
-
-# --- TELA DE PESQUISA ---
-else:
-    nome_exibicao = "Rockwood" if "rockwood" in st.session_state.livro else "Campbell"
-    st.title(f"🔍 Pesquisando: {nome_exibicao}")
+    st.subheader("Selecione a fonte da pesquisa:")
     
-    if st.button("← Trocar Livro"):
-        st.session_state.livro = None
+    c1, c2 = st.columns(2)
+    if c1.button("📚 Rockwood & Green", use_container_width=True):
+        st.session_state.livro_ativo = "livros/rockwood"
+        st.rerun()
+    if c2.button("📖 Campbell's Operative", use_container_width=True):
+        st.session_state.livro_ativo = "livros/campbell"
         st.rerun()
 
+# TELA DE CONSULTA
+else:
+    label = "Rockwood" if "rockwood" in st.session_state.livro_ativo else "Campbell"
+    st.title(f"🔍 Consultando {label}")
+    
+    if st.button("← Voltar e Trocar Livro"):
+        st.session_state.livro_ativo = None
+        st.rerun()
+
+    # Verifica Chave API nos Secrets
+    api_key = st.secrets.get("GROQ_API_KEY")
+    
     if not api_key:
-        st.error("ERRO: Configure a GROQ_API_KEY nos Secrets do Streamlit.")
+        st.error("ERRO: GROQ_API_KEY não configurada nos Secrets do Streamlit.")
     else:
-        # Carrega o motor de busca (Rápido e leve)
-        with st.spinner(f"Preparando biblioteca do {nome_exibicao}..."):
-            retriever = get_search_engine(st.session_state.livro)
+        with st.spinner(f"Carregando biblioteca {label}..."):
+            retriever = get_search_engine(st.session_state.livro_ativo)
         
         if retriever:
-            query = st.text_input(f"O que deseja saber no {nome_exibicao}?")
+            query = st.text_input(f"O que deseja saber no {label}?", placeholder="Ex: Classificacao de Gustilo...")
             
             if query:
-                with st.spinner("🧠 IA analisando capítulos..."):
-                    # Busca os 5 trechos mais importantes usando palavras-chave
-                    results = retriever.get_relevant_documents(query)[:5]
-                    context = "\n".join([d.page_content for d in results])
+                with st.spinner("🧠 IA Analisando capítulos..."):
+                    # Busca os 5 trechos mais relevantes
+                    context_docs = retriever.get_relevant_documents(query)[:5]
+                    context_text = "\n\n".join([d.page_content for d in context_docs])
                     
+                    # Chama o Llama 3 (Groq)
                     llm = ChatGroq(model="llama3-70b-8192", groq_api_key=api_key, temperature=0.1)
-                    prompt = f"Aja como um Ortopedista Senior. Baseado no livro {nome_exibicao}, responda PROFUNDAMENTE e com detalhes técnicos: {query}\n\nContexto:\n{context}"
+                    prompt = f"Aja como um Ortopedista Senior. Baseado no livro {label}, responda profundamente: {query}\n\nContexto extraido:\n{context_text}"
                     
                     resposta = llm.invoke(prompt).content
+                    st.markdown("---")
                     st.markdown(resposta)
                     
-                    # Botões finais
-                    colA, colB = st.columns(2)
-                    with colA:
-                        pdf_bytes = generate_pdf(resposta, query, nome_exibicao)
-                        st.download_button("📥 Baixar PDF", pdf_bytes, f"{query}.pdf")
-                    with colB:
-                        txt_wa = f"*Consulta OrtoXande*\n\n{resposta[:800]}..."
-                        link_wa = f"https://wa.me/?text={txt_wa.replace(' ', '%20')}"
-                        st.markdown(f'<a href="{link_wa}" target="_blank"><button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; width:100%; cursor:pointer;">📲 Enviar WhatsApp</button></a>', unsafe_allow_html=True)
+                    # Botões de Saída
+                    col_pdf, col_wa = st.columns(2)
+                    with col_pdf:
+                        pdf_data = generate_pdf(resposta, query, label)
+                        st.download_button("📥 Baixar Relatorio PDF", pdf_data, f"{query}.pdf")
+                    with col_wa:
+                        wa_msg = f"*OrtoXande - {label}*\n\n{resposta[:800]}..."
+                        link_wa = f"https://wa.me/?text={wa_msg.replace(' ', '%20')}"
+                        st.markdown(f'<a href="{link_wa}" target="_blank" class="wa-button">📲 Enviar via WhatsApp</a>', unsafe_allow_html=True)
         else:
-            st.error("Arquivos não encontrados. Verifique a pasta no GitHub.")
+            st.warning(f"A pasta {st.session_state.livro_ativo} não contém arquivos .md
