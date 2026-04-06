@@ -10,7 +10,7 @@ from fpdf import FPDF
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="🦴")
 
-# 2. PEGAR CHAVE DOS SECRETS (PERMANENTE)
+# 2. PEGAR CHAVE DOS SECRETS
 api_key = st.secrets.get("GROQ_API_KEY")
 
 def generate_pdf(text, query, fonte):
@@ -24,35 +24,50 @@ def generate_pdf(text, query, fonte):
     pdf.multi_cell(0, 10, clean_text)
     return pdf.output(dest='S').encode('latin-1')
 
+# 3. ENGINE DE BUSCA OTIMIZADA (COM SALVAMENTO EM DISCO)
 @st.cache_resource
 def get_vector_db(pasta_livro):
     if not os.path.exists(pasta_livro):
         return None
     
-    docs = []
-    # Busca manual de arquivos .md para evitar erros de biblioteca
-    for arquivo in os.listdir(pasta_livro):
-        if arquivo.endswith(".md"):
-            caminho_completo = os.path.join(pasta_livro, arquivo)
-            loader = TextLoader(caminho_completo, encoding="utf-8")
-            docs.extend(loader.load())
+    # Nome da pasta onde o índice pronto será salvo
+    pasta_indice = pasta_livro.replace("/", "_") + "_index"
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+    # Se o índice já existir no servidor, carrega ele instantaneamente
+    if os.path.exists(pasta_indice):
+        return FAISS.load_local(pasta_indice, embeddings, allow_dangerous_deserialization=True)
     
-    if not docs:
+    # Se não existir, processa os arquivos (Apenas 1 vez)
+    docs = []
+    arquivos = [f for f in os.listdir(pasta_livro) if f.endswith(".md")]
+    
+    if not arquivos:
         return None
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    for arquivo in arquivos:
+        caminho_completo = os.path.join(pasta_livro, arquivo)
+        loader = TextLoader(caminho_completo, encoding="utf-8")
+        docs.extend(loader.load())
+    
+    # Splitter mais eficiente para poupar memória
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     split_docs = text_splitter.split_documents(docs)
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    return FAISS.from_documents(split_docs, embeddings)
+    
+    # Cria o banco e SALVA no disco do servidor
+    vector_db = FAISS.from_documents(split_docs, embeddings)
+    vector_db.save_local(pasta_indice)
+    
+    return vector_db
 
-# Inicializa o estado do livro se não existir
+# Controle de estado
 if "livro_path" not in st.session_state:
     st.session_state.livro_path = None
 
-# --- TELA INICIAL (ESCOLHA DO LIVRO) ---
+# --- TELA INICIAL ---
 if st.session_state.livro_path is None:
     st.title("🛡️ OrtoXande Pro")
-    st.subheader("Escolha a base de conhecimento:")
+    st.subheader("Selecione a base de conhecimento:")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("📚 Rockwood & Green", use_container_width=True):
@@ -63,7 +78,7 @@ if st.session_state.livro_path is None:
             st.session_state.livro_path = "livros/campbell"
             st.rerun()
 
-# --- TELA DE PESQUISA (SÓ APARECE SE UM LIVRO FOI ESCOLHIDO) ---
+# --- TELA DE PESQUISA ---
 else:
     nome_livro = "Rockwood" if "rockwood" in st.session_state.livro_path else "Campbell"
     st.title(f"🔍 Pesquisando no {nome_livro}")
@@ -75,22 +90,23 @@ else:
     if not api_key:
         st.error("ERRO: Configure a GROQ_API_KEY nos Secrets do Streamlit.")
     else:
-        with st.spinner(f"Indexando capítulos do {nome_livro}..."):
-            db = get_vector_db(st.session_state.livro_path)
+        # Carrega ou cria o índice
+        db = get_vector_db(st.session_state.livro_path)
         
         if db:
-            query = st.text_input("Digite sua dúvida ortopédica:")
+            query = st.text_input(f"Dúvida sobre {nome_livro}:", placeholder="Ex: Fratura de rádio distal...")
+            
             if query:
-                with st.spinner("🧠 IA Analisando base científica..."):
+                with st.spinner("🧠 IA analisando base científica..."):
                     llm = ChatGroq(model="llama3-70b-8192", groq_api_key=api_key, temperature=0.1)
-                    res = db.similarity_search(query, k=5)
+                    # Busca os 4 trechos mais relevantes
+                    res = db.similarity_search(query, k=4)
                     context = "\n".join([d.page_content for d in res])
                     
                     prompt = f"Aja como um Ortopedista Senior. Baseado no livro {nome_livro}, responda profundamente: {query}\n\nContexto:\n{context}"
                     resposta = llm.invoke(prompt).content
                     st.markdown(resposta)
                     
-                    # Botões de PDF e WhatsApp
                     colA, colB = st.columns(2)
                     with colA:
                         pdf_data = generate_pdf(resposta, query, nome_livro)
@@ -100,4 +116,4 @@ else:
                         link_wa = f"https://wa.me/?text={txt_wa.replace(' ', '%20')}"
                         st.markdown(f'<a href="{link_wa}" target="_blank"><button style="background-color:#25D366; color:white; border:none; padding:10px 20px; border-radius:5px; width:100%; cursor:pointer;">📲 Enviar WhatsApp</button></a>', unsafe_allow_html=True)
         else:
-            st.warning(f"Atenção: A pasta {st.session_state.livro_path} está vazia ou não existe no GitHub.")
+            st.warning("Pasta de arquivos não encontrada ou processando...")
