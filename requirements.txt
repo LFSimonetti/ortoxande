@@ -2,9 +2,7 @@ streamlit
 langchain
 langchain-community
 langchain-groq
-langchain-huggingface
 langchain-text-splitters
-faiss-cpu
+rank_bm25
 pypdf
 fpdf2
-sentence-transformers
