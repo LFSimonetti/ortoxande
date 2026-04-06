@@ -7,7 +7,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.messages import HumanMessage, SystemMessage
 from fpdf import FPDF
 
-# 1. CONFIGURAÇÃO INICIAL (DEVE SER A PRIMEIRA COISA)
+# 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="🦴")
 
 # 2. PEGAR CHAVE DOS SECRETS
@@ -21,6 +21,7 @@ def generate_pdf(text, query, fonte):
     pdf.cell(0, 10, f"Consulta Ortopedica: {fonte}", ln=True)
     pdf.set_font("Helvetica", size=12)
     pdf.ln(10)
+    # Limpa caracteres especiais para evitar erro no PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
     return pdf.output()
@@ -44,7 +45,7 @@ if "livro" not in st.session_state:
 # TELA DE SELEÇÃO
 if st.session_state.livro is None:
     st.title("🛡️ OrtoXande Pro")
-    st.subheader("Selecione a fonte da pesquisa:")
+    st.subheader("Selecione o livro para pesquisa:")
     c1, c2 = st.columns(2)
     if c1.button("📚 Rockwood & Green", use_container_width=True):
         st.session_state.livro = "livros/rockwood"
@@ -64,17 +65,17 @@ else:
     if not api_key:
         st.error("ERRO: GROQ_API_KEY não configurada nos Secrets do Streamlit.")
     else:
-        with st.spinner(f"Acessando biblioteca {label}..."):
+        with st.spinner(f"Acessando capítulos do {label}..."):
             retriever = get_retriever(st.session_state.livro)
         
         if retriever:
             query = st.text_input(f"O que deseja saber no {label}?")
             if query:
                 with st.spinner("🧠 IA Analisando base científica..."):
-                    context_docs = retriever.get_relevant_documents(query)[:5]
+                    # COMANDO CORRIGIDO: Agora usamos .invoke() em vez de .get_relevant_documents()
+                    context_docs = retriever.invoke(query)[:5]
                     context_text = "\n\n".join([d.page_content for d in context_docs])
                     
-                    # O "CÉREBRO" (LLM) CONFIGURADO CORRETAMENTE
                     llm = ChatGroq(
                         model="llama-3.1-70b-versatile", 
                         groq_api_key=api_key,
@@ -82,7 +83,7 @@ else:
                     )
                     
                     messages = [
-                        SystemMessage(content=f"Aja como um Ortopedista Senior. Baseado no livro {label}, responda profundamente."),
+                        SystemMessage(content=f"Aja como um Ortopedista Senior. Responda profundamente baseado no livro {label}."),
                         HumanMessage(content=f"Pergunta: {query}\n\nUse os trechos abaixo:\n{context_text}")
                     ]
                     
@@ -94,12 +95,13 @@ else:
                         col_pdf, col_wa = st.columns(2)
                         with col_pdf:
                             pdf_data = generate_pdf(resposta, query, label)
+                            # Nota: fpdf2.output() retorna bytes por padrão no modo atual
                             st.download_button("📥 Baixar PDF", pdf_data, f"{query}.pdf")
                         with col_wa:
                             msg_wa = f"*OrtoXande - {label}*\n\n{resposta[:700]}..."
                             link_wa = f"https://wa.me/?text={msg_wa.replace(' ', '%20')}"
-                            st.markdown(f'<a href="{link_wa}" target="_blank" style="background-color:#25D366;color:white;padding:10px;text-align:center;text-decoration:none;display:block;border-radius:5px;font-weight:bold;">📲 WhatsApp</a>', unsafe_allow_html=True)
+                            st.markdown(f'<a href="{link_wa}" target="_blank" style="background-color:#25D366;color:white;padding:12px;text-align:center;text-decoration:none;display:block;border-radius:8px;font-weight:bold;margin-top:10px;">📲 WhatsApp</a>', unsafe_allow_html=True)
                     except Exception as e:
-                        st.error(f"Erro na consulta: {e}")
+                        st.error(f"Erro na consulta à IA: {e}")
         else:
-            st.warning(f"Atenção: A pasta {st.session_state.livro} está vazia no GitHub.")
+            st.warning(f"A pasta {st.session_state.livro} está vazia ou não existe.")
