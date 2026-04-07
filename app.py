@@ -8,22 +8,25 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.messages import HumanMessage, SystemMessage
 from fpdf import FPDF
 
-# 1. CONFIGURAÇÃO INICIAL
-st.set_page_config(page_title="OrtoXande Pro - Modo Literal", layout="centered", page_icon="🦴")
+# 1. CONFIGURAÇÃO DE ALTA PERFORMANCE
+st.set_page_config(page_title="OrtoXande Pro - Decisão Clínica", layout="wide", page_icon="🦴")
 
 # 2. PEGAR CHAVE DOS SECRETS
 api_key = st.secrets.get("GROQ_API_KEY")
 
-# 3. FUNÇÃO DE PDF
+# 3. FUNÇÃO DE GERAÇÃO DE PDF TÉCNICO
 def generate_pdf(text, query, fonte):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, f"Extração Técnica: {fonte}", ln=True)
-    pdf.set_font("Helvetica", size=12)
-    pdf.ln(10)
+    pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(0, 10, f"RELATÓRIO TÉCNICO: {query.upper()}", ln=True, align='C')
+    pdf.set_font("Helvetica", 'I', 10)
+    pdf.cell(0, 10, f"Fonte Consultada: {fonte} - Extração Literal", ln=True, align='C')
+    pdf.ln(5)
+    
+    pdf.set_font("Helvetica", size=11)
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 10, clean_text)
+    pdf.multi_cell(0, 8, clean_text)
     return bytes(pdf.output())
 
 @st.cache_resource
@@ -34,10 +37,10 @@ def get_retriever(pasta):
     if not files: return None
     for f in files:
         loader = TextLoader(os.path.join(pasta, f), encoding="utf-8")
-        # Mantemos o metadado do nome do arquivo (página)
         docs.extend(loader.load())
     
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+    # Chunk maior para preservar tabelas e algoritmos
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=300)
     return BM25Retriever.from_documents(splitter.split_documents(docs))
 
 # 4. LÓGICA DE NAVEGAÇÃO
@@ -45,62 +48,80 @@ if "livro" not in st.session_state:
     st.session_state.livro = None
 
 if st.session_state.livro is None:
-    st.title("🛡️ OrtoXande Pro")
-    st.subheader("Selecione o livro para extração literal:")
+    st.title("🛡️ OrtoXande Pro - Sistema de Extração Técnica")
+    st.info("Configurado para seguir as diretrizes da 8ª edição do Rockwood & Green e Campbell's Operative.")
+    
     c1, c2 = st.columns(2)
-    if c1.button("📚 Rockwood & Green", use_container_width=True):
-        st.session_state.livro = "livros/rockwood"
-        st.rerun()
-    if c2.button("📖 Campbell's Operative", use_container_width=True):
-        st.session_state.livro = "livros/campbell"
-        st.rerun()
+    with c1:
+        if st.button("📚 Rockwood & Green", use_container_width=True):
+            st.session_state.livro = "livros/rockwood"
+            st.rerun()
+    with c2:
+        if st.button("📖 Campbell's Operative", use_container_width=True):
+            st.session_state.livro = "livros/campbell"
+            st.rerun()
 
 else:
     label = "Rockwood" if "rockwood" in st.session_state.livro else "Campbell"
-    st.title(f"🔍 Fonte: {label}")
-    if st.button("← Trocar de Livro"):
+    st.sidebar.title(f"📖 {label}")
+    if st.sidebar.button("← Trocar Livro"):
         st.session_state.livro = None
         st.rerun()
 
     if not api_key:
         st.error("ERRO: GROQ_API_KEY não configurada.")
     else:
-        with st.spinner(f"Sincronizando capítulos do {label}..."):
+        with st.spinner("Sincronizando base de dados..."):
             retriever = get_retriever(st.session_state.livro)
         
         if retriever:
-            query = st.text_input(f"O que deseja extrair do {label}?")
+            query = st.text_input("Descreva a fratura para análise (ex: Fratura diafisária da tíbia):")
+            
             if query:
-                with st.spinner("🧠 Localizando informações exatas..."):
-                    # Busca trechos relevantes
-                    context_docs = retriever.invoke(query)[:5]
-                    
-                    # Monta o contexto incluindo explicitamente a fonte (nome do arquivo/página)
+                with st.spinner("🧠 Localizando evidências e algoritmos..."):
+                    context_docs = retriever.invoke(query)[:6]
                     context_text = ""
                     for d in context_docs:
-                        fonte_origem = os.path.basename(d.metadata.get('source', 'Desconhecida'))
-                        context_text += f"\n[FONTE: {fonte_origem}]\n{d.page_content}\n---"
+                        # Extrai o nome do arquivo para citação
+                        pag_ref = os.path.basename(d.metadata.get('source', 'Fonte')).replace('.md', '')
+                        context_text += f"\n[TRECHO DA FONTE: {pag_ref}]\n{d.page_content}\n---"
                     
-                    # LLM com Temperatura ZERO (sem criatividade)
-                    llm = ChatGroq(
-                        model="llama-3.3-70b-versatile", 
-                        groq_api_key=api_key,
-                        temperature=0.0  # Rigidez absoluta
-                    )
+                    llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=api_key, temperature=0.0)
                     
-                    # PROMPT DE RIGIDEZ MÁXIMA
-                    system_prompt = (
-                        f"Você é um transcritor técnico médico do livro {label}. "
-                        "Sua resposta deve ser baseada EXCLUSIVAMENTE nos trechos fornecidos. "
-                        "NÃO use conhecimentos externos. NÃO interprete. "
-                        "Transcreva ou resuma os fatos exatamente como estão no texto. "
-                        "Ao final de cada parágrafo ou explicação, cite obrigatoriamente entre parênteses "
-                        "o nome do arquivo fonte fornecido no contexto (ex: página ou capítulo)."
-                    )
+                    # SYSTEM PROMPT - O RIGOR DO CHECKLIST
+                    system_prompt = f"""
+                    Você é um motor de extração técnica médica fiel ao livro {label}.
+                    Sua resposta deve ser 100% baseada nos trechos fornecidos. Se uma informação não estiver presente, escreva 'Informação não detalhada nos trechos consultados'.
+                    
+                    ESTRUTURA OBRIGATÓRIA DA RESPOSTA:
+
+                    1. IDENTIFICAÇÃO E LOCALIZAÇÃO ANATÔMICA: Osso, região (terço proximal/médio/distal) e se é intra ou extra-articular.
+                    
+                    2. MORFOLOGIA E PADRÃO DA FRATURA: Traço (transversal, oblíqua, espiral, cominutiva) e tipo de desvio descrito.
+                    
+                    3. CLASSIFICAÇÃO ESPECÍFICA: Citar AO/OTA (ex: 32-B2) e classificações epônimas ou específicas mencionadas (ex: Gustilo, Neer, Garden).
+                    
+                    4. AVALIAÇÃO DE PARTES MOLES: Integridade da pele e escalas de lesão tecidual (ex: Tscherne).
+                    
+                    5. MECANISMO E CONDIÇÕES DO PACIENTE: Etiologia (alta/baixa energia) e qualidade óssea (osteoporose/patológica).
+                    
+                    6. ESTRUTURA ACADÊMICA:
+                       - Título da Fratura
+                       - Mecanismo de Lesão
+                       - Classificação Clínica detalhada
+                       - Avaliação Radiográfica necessária
+                       - Algoritmo de Tratamento (Conservador vs Cirúrgico)
+                       - Pérolas e Armadilhas (Pearls and Pitfalls)
+
+                    REGRAS CRÍTICAS:
+                    - Use linguagem técnica médica formal.
+                    - Ao final de CADA uma das 6 seções, cite entre parênteses a [FONTE: nome_do_arquivo] de onde o dado foi extraído.
+                    - Proibido adicionar recomendações que não estejam no texto.
+                    """
                     
                     messages = [
                         SystemMessage(content=system_prompt),
-                        HumanMessage(content=f"Pergunta: {query}\n\nTrechos do Livro:\n{context_text}")
+                        HumanMessage(content=f"Pergunta Clínica: {query}\n\nBase de Dados:\n{context_text}")
                     ]
                     
                     try:
@@ -111,9 +132,18 @@ else:
                         col_pdf, col_wa = st.columns(2)
                         with col_pdf:
                             pdf_bytes = generate_pdf(resposta, query, label)
-                            st.download_button("📥 Baixar Relatório Técnico", pdf_bytes, f"{query}.pdf")
+                            st.download_button("📥 Baixar Relatório Clínico (PDF)", pdf_bytes, f"Analise_{query}.pdf")
                         with col_wa:
-                            msg_wa = urllib.parse.quote(f"*Extração OrtoXande - {label}*\n\n{resposta[:800]}")
-                            st.markdown(f'<a href="https://wa.me/?text={msg_wa}" target="_blank" style="text-decoration:none;"><div style="background-color:#25D366;color:white;padding:10px;text-align:center;border-radius:8px;font-weight:bold;margin-top:10px;">📲 Enviar WhatsApp</div></a>', unsafe_allow_html=True)
+                            # Limite de segurança para link de WhatsApp
+                            msg_wa = urllib.parse.quote(f"*Consulta OrtoXande Pro*\n\n{resposta[:900]}")
+                            st.markdown(f'''
+                                <a href="https://wa.me/?text={msg_wa}" target="_blank" style="text-decoration:none;">
+                                    <div style="background-color:#25D366;color:white;padding:12px;text-align:center;border-radius:10px;font-weight:bold;">
+                                        📲 Enviar via WhatsApp
+                                    </div>
+                                </a>
+                            ''', unsafe_allow_html=True)
                     except Exception as e:
                         st.error(f"Erro na extração: {e}")
+        else:
+            st.warning("Base de dados não encontrada. Verifique os arquivos .md no GitHub.")
