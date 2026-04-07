@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import urllib.parse  # Biblioteca para codificar o link do WhatsApp com segurança
 from langchain_community.document_loaders import TextLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_groq import ChatGroq
@@ -13,7 +14,7 @@ st.set_page_config(page_title="OrtoXande Pro", layout="centered", page_icon="�
 # 2. PEGAR CHAVE DOS SECRETS
 api_key = st.secrets.get("GROQ_API_KEY")
 
-# 3. FUNÇÃO DE PDF CORRIGIDA
+# 3. FUNÇÃO DE PDF
 def generate_pdf(text, query, fonte):
     pdf = FPDF()
     pdf.add_page()
@@ -21,10 +22,8 @@ def generate_pdf(text, query, fonte):
     pdf.cell(0, 10, f"Consulta Ortopedica: {fonte}", ln=True)
     pdf.set_font("Helvetica", size=12)
     pdf.ln(10)
-    # Limpa caracteres especiais para evitar erros de encoding no PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 10, clean_text)
-    # Convertendo bytearray para bytes (Correção do erro)
     return bytes(pdf.output())
 
 @st.cache_resource
@@ -94,7 +93,6 @@ else:
                         
                         col_pdf, col_wa = st.columns(2)
                         with col_pdf:
-                            # Gerando o PDF com a correção de formato
                             pdf_bytes = generate_pdf(resposta, query, label)
                             st.download_button(
                                 label="📥 Baixar PDF",
@@ -103,9 +101,34 @@ else:
                                 mime="application/pdf"
                             )
                         with col_wa:
-                            msg_wa = f"*OrtoXande - {label}*\n\n{resposta[:700]}..."
-                            link_wa = f"https://wa.me/?text={msg_wa.replace(' ', '%20')}"
-                            st.markdown(f'<a href="{link_wa}" target="_blank" style="background-color:#25D366;color:white;padding:12px;text-align:center;text-decoration:none;display:block;border-radius:8px;font-weight:bold;margin-top:10px;">📲 WhatsApp</a>', unsafe_allow_html=True)
+                            # CODIFICAÇÃO PROFISSIONAL PARA WHATSAPP
+                            prefixo = f"*OrtoXande - {label}*\n\n"
+                            # Pegamos os primeiros 800 caracteres para não exceder o limite do link
+                            mensagem_final = prefixo + resposta[:800] + "..."
+                            # O comando quote codifica aspas, espaços e símbolos corretamente
+                            msg_encoded = urllib.parse.quote(mensagem_final)
+                            link_wa = f"https://wa.me/?text={msg_encoded}"
+                            
+                            # Botão HTML Blindado
+                            st.markdown(
+                                f"""
+                                <a href="{link_wa}" target="_blank" style="text-decoration: none;">
+                                    <div style="
+                                        background-color: #25D366;
+                                        color: white;
+                                        padding: 10px;
+                                        text-align: center;
+                                        border-radius: 8px;
+                                        font-weight: bold;
+                                        display: block;
+                                        margin-top: 10px;
+                                    ">
+                                        📲 Enviar WhatsApp
+                                    </div>
+                                </a>
+                                """,
+                                unsafe_allow_html=True
+                            )
                     except Exception as e:
                         st.error(f"Erro na consulta à IA: {e}")
         else:
